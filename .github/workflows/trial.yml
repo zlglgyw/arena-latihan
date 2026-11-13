@@ -1,0 +1,154 @@
+# trial.yml — jalankan trial arena latihan di GitHub Actions (gratis, repo publik).
+#
+# Tiap run = satu clone arena di runner baru (ubuntu, 4 vCPU). Trial 0, 1, 2
+# bisa jalan PARALEL lewat matrix (input trial = all), masing-masing di
+# runnernya sendiri — tidak ada bentrok port atau state.
+#
+# Cara pakai: repo GitHub -> tab Actions -> "Arena trial" -> Run workflow,
+# pilih arena / trial / entry, lalu Run. Hasil kembali sebagai artifact
+# (skor + log) dan ringkasan di halaman run.
+#
+# Catatan penting:
+# - TIDAK ADA secret / API key / keypair di workflow ini. Kit tiny-chess
+#   diunduh dari URL publik make.fun, dan grading 100% lokal di runner.
+# - Hasil TIDAK otomatis commit kembali ke repo. Skor dari artifact
+#   digabung manual ke scoreboard lokal (lihat REPO-LAYOUT.md).
+# - Workflow ini HANYA jalan manual (workflow_dispatch) — tidak ada
+#   trigger push/PR, supaya menit Actions tidak terpakai tanpa sengaja.
+# - File ini HARUS dibuat Pak lewat web UI GitHub (Add file -> Create new
+#   file -> .github/workflows/trial.yml, paste isi file ini): GitHub App
+#   Muse tidak punya izin Workflows sehingga tidak bisa push file ini.
+name: Arena trial
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+    inputs:
+      arena:
+        description: 'Arena yang dinilai'
+        type: choice
+        required: true
+        default: tiny-chess-01
+        options:
+          - tiny-chess-01
+          - mini-forecast
+      trial:
+        description: 'Nomor trial tiny-chess (0/1/2), atau all = ketiganya paralel. Diabaikan untuk mini-forecast.'
+        type: choice
+        required: true
+        default: '0'
+        options:
+          - '0'
+          - '1'
+          - '2'
+          - all
+      entry:
+        description: 'Nama direktori entry di arenas/<arena>/entries/. Kosong = default arena (v8-baseline / baseline-mean).'
+        type: string
+        required: false
+        default: ''
+
+jobs:
+  setup:
+    name: Siapkan matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.m.outputs.matrix }}
+      entry: ${{ steps.m.outputs.entry }}
+    steps:
+      - id: m
+        run: |
+          ENTRY='${{ inputs.entry }}'
+          if [ -z "$ENTRY" ]; then
+            if [ "${{ inputs.arena }}" = "mini-forecast" ]; then
+              ENTRY='baseline-mean'
+            else
+              ENTRY='v8-baseline'
+            fi
+          fi
+          echo "entry=$ENTRY" >> "$GITHUB_OUTPUT"
+          if [ "${{ inputs.arena }}" = "mini-forecast" ]; then
+            echo 'matrix={"trial":["forecast"]}' >> "$GITHUB_OUTPUT"
+          elif [ "${{ inputs.trial }}" = "all" ]; then
+            echo 'matrix={"trial":["0","1","2"]}' >> "$GITHUB_OUTPUT"
+          else
+            echo "matrix={\"trial\":[\"${{ inputs.trial }}\"]}" >> "$GITHUB_OUTPUT"
+          fi
+
+  grade:
+    name: Grading ${{ inputs.arena }} (trial ${{ matrix.trial }})
+    needs: setup
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # Kit diunduh fresh tiap run (publik, ~6 MB) ke path yang sama dengan
+      # yang dipakai grade.sh secara lokal — grade.sh tidak perlu diubah.
+      # Kit TIDAK PERNAH di-commit ke repo.
+      - name: Unduh kit tiny-chess-01 (publik)
+        if: inputs.arena == 'tiny-chess-01'
+        run: |
+          mkdir -p "$HOME/workspace/makefun"
+          curl -sSL --max-time 300 -o /tmp/kit.tar.gz "https://make.fun/c/tiny-chess-01/kit"
+          test -s /tmp/kit.tar.gz
+          tar -xzf /tmp/kit.tar.gz -C "$HOME/workspace/makefun"
+          KIT="$HOME/workspace/makefun/tiny-chess-01-kit"
+          test -f "$KIT/program/env/server.mjs"
+          test -f "$KIT/program/scorer/score.mjs"
+          test -d "$KIT/practice/trial-0"
+          test -d "$KIT/practice/trial-1"
+          test -d "$KIT/practice/trial-2"
+          echo "kit OK: $(du -sh "$KIT" | cut -f1)"
+
+      - name: Jalankan grading
+        run: |
+          cd "arenas/${{ inputs.arena }}"
+          if [ "${{ inputs.arena }}" = "mini-forecast" ]; then
+            ./grade.sh "entries/${{ needs.setup.outputs.entry }}"
+          else
+            ./grade.sh "${{ matrix.trial }}" "entries/${{ needs.setup.outputs.entry }}"
+          fi
+
+      - name: Ringkasan hasil
+        if: always()
+        run: |
+          {
+            echo "## Hasil trial — ${{ inputs.arena }} / ${{ needs.setup.outputs.entry }} / trial ${{ matrix.trial }}"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ inputs.arena }}" = "mini-forecast" ]; then
+            SCORE_FILE="$(ls -dt arenas/mini-forecast/runs/*/result.json 2>/dev/null | head -1)"
+          else
+            SCORE_FILE="$(ls -dt arenas/tiny-chess-01/runs/*/scores/scores.json 2>/dev/null | head -1)"
+          fi
+          if [ -n "$SCORE_FILE" ] && [ -f "$SCORE_FILE" ]; then
+            echo '```json' >> "$GITHUB_STEP_SUMMARY"
+            cat "$SCORE_FILE" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Skor tidak dihasilkan (grading gagal sebelum scorer) — lihat log di artifact." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hasil-${{ inputs.arena }}-${{ needs.setup.outputs.entry }}-${{ matrix.trial }}-${{ github.run_id }}
+          path: |
+            arenas/${{ inputs.arena }}/runs/
+            arenas/${{ inputs.arena }}/scoreboard.jsonl
+          if-no-files-found: warn
+          retention-days: 30
