@@ -1,5 +1,6 @@
 # trial.yml — jalankan trial arena latihan di GitHub Actions (gratis, repo publik).
-#
+#bash ./grade.sh "entries/${{ needs.setup.outputs.entry }}"
+bash ./grade.sh "${{ matrix.trial }}" "entries/${{ needs.setup.outputs.entry }}"
 # Tiap run = satu clone arena di runner baru (ubuntu, 4 vCPU). Trial 0, 1, 2
 # bisa jalan PARALEL lewat matrix (input trial = all), masing-masing di
 # runnernya sendiri — tidak ada bentrok port atau state.
