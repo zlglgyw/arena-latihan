@@ -1,0 +1,6 @@
+# Hasil run lokal — tidak di-push; hasil dari GitHub Actions kembali lewat artifact.
+runs/
+# Folder persiapan lokal (dokumen proses, bukan isi arena).
+gh-actions-prep/
+# Kit make.fun — diunduh fresh tiap run, jangan commit.
+tiny-chess-01-kit/
