@@ -1,6 +1,5 @@
 # trial.yml — jalankan trial arena latihan di GitHub Actions (gratis, repo publik).
-#bash ./grade.sh "entries/${{ needs.setup.outputs.entry }}"
-bash ./grade.sh "${{ matrix.trial }}" "entries/${{ needs.setup.outputs.entry }}"
+#
 # Tiap run = satu clone arena di runner baru (ubuntu, 4 vCPU). Trial 0, 1, 2
 # bisa jalan PARALEL lewat matrix (input trial = all), masing-masing di
 # runnernya sendiri — tidak ada bentrok port atau state.
@@ -118,10 +117,14 @@ jobs:
       - name: Jalankan grading
         run: |
           cd "arenas/${{ inputs.arena }}"
+          # PENTING: panggil lewat `bash`, BUKAN `./grade.sh` — file .sh yang
+          # di-push lewat API GitHub kehilangan bit executable (mode 100644),
+          # sehingga `./grade.sh` gagal "Permission denied" di runner.
+          # (Run #1 mini-forecast 13 Nov 20:24 WIB gagal karena ini.)
           if [ "${{ inputs.arena }}" = "mini-forecast" ]; then
-            ./grade.sh "entries/${{ needs.setup.outputs.entry }}"
+            bash grade.sh "entries/${{ needs.setup.outputs.entry }}"
           else
-            ./grade.sh "${{ matrix.trial }}" "entries/${{ needs.setup.outputs.entry }}"
+            bash grade.sh "${{ matrix.trial }}" "entries/${{ needs.setup.outputs.entry }}"
           fi
 
       - name: Ringkasan hasil
@@ -153,3 +156,4 @@ jobs:
             arenas/${{ inputs.arena }}/scoreboard.jsonl
           if-no-files-found: warn
           retention-days: 30
+          
